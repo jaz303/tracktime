@@ -1,0 +1,16 @@
+# Format of this file is very simple
+#
+# lines starting with # are comments
+#
+# Task done for whole day (subtracting hour for lunch):
+# dd/mm/yyyy scheduler
+#
+# Task done for whole day (including lunch hour):
+# dd/mm/yyyy ! holiday
+#
+# Task done for hours:
+# dd/mm/yyyy 4.5 pfizer
+# dd/mm/yyyy 3 scheduler
+#
+# Rest of line will override text supplied by your personal mapping:
+# dd/mm/yyyy !holiday TOIL

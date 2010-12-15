@@ -1,0 +1,182 @@
+#!/usr/bin/env ruby
+
+require 'date'
+require 'uri'
+require 'net/http'
+require 'net/https'
+require 'rexml/document'
+
+class Net::HTTP
+  alias_method :old_initialize, :initialize
+  def initialize(*args)
+    old_initialize(*args)
+    @ssl_context = OpenSSL::SSL::SSLContext.new
+    @ssl_context.verify_mode = OpenSSL::SSL::VERIFY_NONE
+  end
+end
+
+class Tracker
+  @@api_url = "https://55degrees.basecamphq.com"
+  @@api_key = nil
+  @@normal_hours = 7.5
+  @@full_hours = 8.5
+  @@person = ""
+  
+  @@map = {}
+  
+  def self.api_key; @@api_key; end
+  def self.api_key=(v); @@api_key = v; end
+  
+  def self.normal_hours; @@normal_hours; end
+  def self.normal_hours=(v); @@normal_hours = v; end
+  
+  def self.full_hours; @@full_hours; end
+  def self.full_hours=(v); @@full_hours = v; end
+  
+  def self.map(string, task_id, default_text = '')
+    @@map[string] = {:task_id => task_id, :default_text => default_text}
+  end
+  
+  def self.[](k)
+    @@map[k]
+  end
+  
+  def self.init!
+    uri = URI.parse("#{@@api_url}/me.xml")
+    req = Net::HTTP::Get.new(uri.path)
+    req.basic_auth Tracker.api_key, 'X'
+    req.content_type = 'application/xml'
+    req['Accept'] = 'application/xml'
+    
+    begin
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+      res = http.start { |http| http.request(req) }
+      doc = REXML::Document.new(res.body)
+      @@person = doc.root.elements['id'].text
+    end
+    
+    raise unless @@person =~ /^\d+$/
+    puts "Hello! Your ID is #{@@person}"
+  end
+  
+  def self.track_todo_item(task_id, date, hours, description)
+    xml = <<-XML
+      <time-entry>
+        <person-id>#{@@person}</person-id>
+        <date>#{date.strftime("%Y-%m-%d")}</date>
+        <hours>#{hours}</hours>
+        <description>#{description}</description>
+      </time-entry>
+    XML
+    
+    uri = URI.parse("#{@@api_url}/todo_items/#{task_id}/time_entries.xml")
+    req = Net::HTTP::Post.new(uri.path)
+    req.basic_auth Tracker.api_key, 'X'
+    req.content_type = 'application/xml'
+    req['Accept'] = 'application/xml'
+    req.body = xml
+    
+    res = nil
+    begin
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true 
+      res = http.start { |http| http.request(req) }
+    rescue => e
+      p e
+    end
+    
+    if res
+      case res
+      when Net::HTTPSuccess
+        true
+      else
+        false
+      end
+    else
+      false
+    end
+  end
+end
+
+require '~/.timetrack.rb'
+
+filename = ARGV[0]
+
+unless File.exists?(filename || '')
+  puts "Error: #{filename} does not exist"
+  exit 1
+end
+
+begin
+  Tracker.init!
+rescue => e
+  puts "Tracker init failed, check URL/API key"
+  exit 1
+end
+
+contents = File.read(filename)
+line_number = 0
+File.open(filename, 'w') do |f|
+  contents.each_line do |line|
+    line_number += 1
+    processed = line.strip
+    if processed.length == 0 || processed =~ /^#/ 
+      f.write line
+    else
+      chunks = processed.split(/\s+/)
+      
+      # chunk 1 - date
+      begin
+        date = Date.strptime(chunks.shift, '%d/%m/%Y')
+        raise if date.nil?
+      rescue => e
+        puts "Error parsing date on line #{line_number}, skipping"
+        f.write line
+        next
+      end
+      
+      # chunk 2 - hours, maybe
+      hours = chunks.shift
+      if hours =~ /^\d+(\.\d+)?$/
+        hours = hours.to_f
+      elsif hours == '!'
+        hours = Tracker.full_hours
+      else
+        chunks.unshift(hours)
+        hours = Tracker.normal_hours
+      end
+      
+      # chunk 3 - task
+      task = chunks.shift
+      mapping = Tracker[task]
+      if !mapping
+        puts "Error: no mapping for task '#{task}' on line #{line_number}, skipping"
+        f.write line
+        next
+      end
+      
+      tracked_id = nil
+      task_id = mapping[:task_id]
+      text = chunks.empty? ? mapping[:default_text] : chunks.join(' ')
+      
+      puts "Logging #{hours} hours on task ##{task_id} with text '#{text}'"
+      
+      begin
+        if Tracker.track_todo_item(task_id, date, hours, text)
+          tracked_id = 'OK'
+        else
+          raise
+        end
+      rescue => e
+        puts "Error: failed to log time against task"
+      end
+      
+      if tracked_id
+        f.write "##{tracked_id} #{line}"
+      else
+        f.write line
+      end
+    end
+  end
+end
