@@ -1,6 +1,10 @@
 # Format of this file is very simple
 #
-# lines starting with # are comments
+# - Lines starting with # are comments
+# - Processed lines will be commented out automatically
+# - Blank lines are ignored
+#
+# Supported formats:
 #
 # Task done for whole day (subtracting hour for lunch):
 # dd/mm/yyyy scheduler
